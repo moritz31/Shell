@@ -79,9 +79,9 @@ $RECYCLE.BIN/
 *.lnk
 
 # Netbeans
-nbproject/private/
+nbproject/
 build/
 nbbuild/
 dist/
 nbdist/
-.nb-gradle/
+.dep.inc
