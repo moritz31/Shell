@@ -13,12 +13,32 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <algorithm>
+#include <signal.h>      // signal
 #include <sys/wait.h>    // std::transform
+
+void sig_handler(int signal) {
+    std::string sig_str;
+    switch(signal) {
+        case SIGINT:
+            sig_str = "SIGINT";
+            break;
+        case SIGTSTP:
+            sig_str = "SIGTSTP";
+            break;
+        default:
+            sig_str = "UNKOWN";
+            break;   
+    }
+    
+    std::cout << "Signal Received: " << sig_str << std::endl;
+}
 
 ShellInterpreter::ShellInterpreter() {
     this->isRunning = true;
     this->shell_prompt = "$";
     this->processWait = true;
+    signal(SIGINT,sig_handler);
+    signal(SIGTSTP,sig_handler);
 }
 
 ShellInterpreter::ShellInterpreter(const ShellInterpreter& orig) {
