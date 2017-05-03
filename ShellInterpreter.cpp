@@ -16,14 +16,26 @@
 #include <signal.h>      // signal
 #include <sys/wait.h>    // std::transform
 
+int foreGroundProcessPID;
+int exitProcess = 0;
+
+const std::string ShellInterpreter::cmds[3]= { "logout", "fg", "bg"};
+
 void sig_handler(int signal) {
     std::string sig_str;
     switch(signal) {
         case SIGINT:
             sig_str = "SIGINT";
+            kill(foreGroundProcessPID,SIGINT);
             break;
         case SIGTSTP:
             sig_str = "SIGTSTP";
+            kill(foreGroundProcessPID,SIGTSTP);
+            std::cout << foreGroundProcessPID << std::endl;
+            break;
+        case SIGCHLD:
+            sig_str = "SIGCHLD";
+            while (waitpid((pid_t)(-1), 0, WNOHANG) > 0) {}
             break;
         default:
             sig_str = "UNKOWN";
@@ -37,8 +49,10 @@ ShellInterpreter::ShellInterpreter() {
     this->isRunning = true;
     this->shell_prompt = "$";
     this->processWait = true;
+    
     signal(SIGINT,sig_handler);
     signal(SIGTSTP,sig_handler);
+    signal(SIGCHLD,sig_handler);
 }
 
 ShellInterpreter::ShellInterpreter(const ShellInterpreter& orig) {
@@ -81,6 +95,7 @@ void ShellInterpreter::cleanUp(void) {
     this->execBuffer.clear(); // Clear the vector
     this->buffer.clear(); // Clear the string
     this->processWait = true; // Rest the wait to default  
+    
 }
 
 /**
@@ -114,9 +129,12 @@ bool ShellInterpreter::formatInput() {
     // If the inputBuffer is empty we do not have to do anything
     if(this->buffer.empty()) {
         return false;
-    } else if(this->buffer == "logout") {
-        this->isRunning = false;
-        return false;
+    } else if(this->buffer == cmds[0]) {
+        return this->shell_logout();
+    } else if(this->buffer == cmds[1]) {
+        return this->shell_fg();
+    } else if(this->buffer == cmds[2]) {
+        return this->shell_bg();
     }
         
     // Create a stringstream from a buffer and pass the string to the vector
@@ -144,16 +162,17 @@ bool ShellInterpreter::formatInput() {
 void ShellInterpreter::executeProcess(void) {
 
     int pid;
-    
+    int status;
     // Try to fork a child process
     if((pid = fork()) < 0) {
+        setpgid(0,0);
         
         std::cout << "[ERROR] Forking process" << std::endl;
         //Error while forking
         exit(1);
     } else if(pid == 0) { // If we are the child process try to run the command
-        
         // Try to execute the buffer
+        setpgid(0,0);
         if(execvp(this->execBuffer[0],this->execBuffer.data()) < 0) {
             
             std::cout << "[ERROR] Executing process" << std::endl;
@@ -161,13 +180,54 @@ void ShellInterpreter::executeProcess(void) {
             exit(1);
         }
         
-    }
-    
-    // If we want to wait for an process to finish we need to call waitpid
-    if(this->processWait) {
-        waitpid(pid,NULL,0);
     } else {
-        std::cout << "[PID] " << pid << std::endl;
+        
+        // If we want to wait for an process to finish we need to call waitpid
+        if(this->processWait) {
+            process_t c = {.pid = pid, .state = FOREGROUND};
+            this->currentProcess = c;
+            foreGroundProcessPID = c.pid;
+            this->processList.push_back(c);
+            waitpid(pid,&status,WUNTRACED);
+        } else {
+            process_t c = {.pid = pid, .state = BACKGROUND};
+            this->processList.push_back(c);
+            std::cout << "[PID] " << pid << std::endl;
+        }
     }
+ }
+    
+
+/**
+ * 
+ * @return 
+ */
+bool ShellInterpreter::shell_logout(void) {
+    if(this->processList.size() != 0) {
+        std::cout << "[ERROR] not all backgroundjobs finished!" << std::endl;
+        return false;
+    }
+    this->isRunning = false;
+    return false;
+}
+
+/**
+ * 
+ * @return 
+ */
+bool ShellInterpreter::shell_fg(void) {
+    int status;
+    kill(foreGroundProcessPID,SIGCONT);
+    waitpid(foreGroundProcessPID,&status,WUNTRACED);
+    return false;
+}
+
+/**
+ * 
+ * @return 
+ */
+bool ShellInterpreter::shell_bg(void) {
+    kill(foreGroundProcessPID,SIGCONT);
+    return false;
     
 }
