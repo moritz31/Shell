@@ -28,7 +28,7 @@ std::vector<process_t> ShellInterpreter::processList;
  * 
  * @param sig
  */
-void sigint_handler(int sig) {
+void ShellInterpreter::sigint_handler(int sig) {
     if(foreGroundProcessPID != -1) {
         kill(foreGroundProcessPID,SIGINT);
         std::cout << "[SIGINT] received" << std::endl;
@@ -39,7 +39,7 @@ void sigint_handler(int sig) {
  * 
  * @param sig
  */
-void sigtstp_handler(int sig) {
+void ShellInterpreter::sigtstp_handler(int sig) {
     if(foreGroundProcessPID != -1) {
         kill(foreGroundProcessPID,SIGTSTP);
         std::cout << "[SIGTSTP] received" << std::endl;
@@ -50,7 +50,7 @@ void sigtstp_handler(int sig) {
  * 
  * @param sig
  */
-void sigchld_handler(int sig) {
+void ShellInterpreter::sigchld_handler(int sig) {
     int status;  
     pid_t pid;  
     
@@ -60,17 +60,16 @@ void sigchld_handler(int sig) {
         if(pid == 0)
             return;
         
+        // If child is stopped set the job to stopped
         if (WIFSTOPPED(status)) {
             ShellInterpreter::setStoppedJob(pid);
         }
         
+        // If child exited dispatch the job from the list
 	if (WIFEXITED(status)) {
             ShellInterpreter::dispatchJob(pid);
-            std::cout << "[WIFEXITED]" <<pid << std::endl;
         }
     }  
-	
-    std::cout << "[SIGCHLD] received" << std::endl;
 }
 
 ShellInterpreter::ShellInterpreter() {
@@ -78,9 +77,9 @@ ShellInterpreter::ShellInterpreter() {
     this->shell_prompt = "$";
     this->processWait = true;
     
-    signal(SIGINT,sigint_handler);
-    signal(SIGTSTP,sigtstp_handler);
-    signal(SIGCHLD,sigchld_handler);
+    signal(SIGINT,ShellInterpreter::sigint_handler);
+    signal(SIGTSTP,ShellInterpreter::sigtstp_handler);
+    signal(SIGCHLD,ShellInterpreter::sigchld_handler);
 }
 
 ShellInterpreter::ShellInterpreter(const ShellInterpreter& orig) {
@@ -211,19 +210,26 @@ void ShellInterpreter::executeProcess(void) {
         
         // If we want to wait for an process to finish we need to call waitpid
         if(this->processWait) {
-            process_t c = {.pid = pid, .state = FOREGROUND};
-            this->currentProcess = c;
-            foreGroundProcessPID = c.pid;
-            ShellInterpreter::processList.push_back(c);
+            this->addJob(pid);
+            this->setForeGroundJob(pid);
             waitpid(pid,&status,WUNTRACED);
         } else {
-            process_t c = {.pid = pid, .state = BACKGROUND};
-            ShellInterpreter::processList.push_back(c);
+            this->addJob(pid);
+            this->setBackgroundJob(pid);
             std::cout << "[PID] " << pid << std::endl;
         }
     }
  }
  
+/**
+ * 
+ * @param pid
+ */
+void ShellInterpreter::addJob(pid_t pid) {
+    process_t new_proc = {.pid = pid, .state = UNKOWN};
+    ShellInterpreter::processList.push_back(new_proc);
+}
+
 /**
  * 
  * @param pid
