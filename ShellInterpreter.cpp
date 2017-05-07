@@ -19,30 +19,58 @@
 int foreGroundProcessPID;
 int exitProcess = 0;
 
+// Define shell cmds
 const std::string ShellInterpreter::cmds[3]= { "logout", "fg", "bg"};
 
-void sig_handler(int signal) {
-    std::string sig_str;
-    switch(signal) {
-        case SIGINT:
-            sig_str = "SIGINT";
-            kill(foreGroundProcessPID,SIGINT);
-            break;
-        case SIGTSTP:
-            sig_str = "SIGTSTP";
-            kill(foreGroundProcessPID,SIGTSTP);
-            std::cout << foreGroundProcessPID << std::endl;
-            break;
-        case SIGCHLD:
-            sig_str = "SIGCHLD";
-            while (waitpid((pid_t)(-1), 0, WNOHANG) > 0) {}
-            break;
-        default:
-            sig_str = "UNKOWN";
-            break;   
+std::vector<process_t> ShellInterpreter::processList;
+
+/**
+ * 
+ * @param sig
+ */
+void sigint_handler(int sig) {
+    if(foreGroundProcessPID != -1) {
+        kill(foreGroundProcessPID,SIGINT);
+        std::cout << "[SIGINT] received" << std::endl;
     }
+}
+
+/**
+ * 
+ * @param sig
+ */
+void sigtstp_handler(int sig) {
+    if(foreGroundProcessPID != -1) {
+        kill(foreGroundProcessPID,SIGTSTP);
+        std::cout << "[SIGTSTP] received" << std::endl;
+    }
+}
+
+/**
+ * 
+ * @param sig
+ */
+void sigchld_handler(int sig) {
+    int status;  
+    pid_t pid;  
     
-    std::cout << "Signal Received: " << sig_str << std::endl;
+    // Waiting for/ handling all of the child processes according to their status
+    while ((pid = waitpid(-1, &status, WNOHANG)) != -1) {  
+          
+        if(pid == 0)
+            return;
+        
+        if (WIFSTOPPED(status)) {
+            ShellInterpreter::setStoppedJob(pid);
+        }
+        
+	if (WIFEXITED(status)) {
+            ShellInterpreter::dispatchJob(pid);
+            std::cout << "[WIFEXITED]" <<pid << std::endl;
+        }
+    }  
+	
+    std::cout << "[SIGCHLD] received" << std::endl;
 }
 
 ShellInterpreter::ShellInterpreter() {
@@ -50,9 +78,9 @@ ShellInterpreter::ShellInterpreter() {
     this->shell_prompt = "$";
     this->processWait = true;
     
-    signal(SIGINT,sig_handler);
-    signal(SIGTSTP,sig_handler);
-    signal(SIGCHLD,sig_handler);
+    signal(SIGINT,sigint_handler);
+    signal(SIGTSTP,sigtstp_handler);
+    signal(SIGCHLD,sigchld_handler);
 }
 
 ShellInterpreter::ShellInterpreter(const ShellInterpreter& orig) {
@@ -68,7 +96,6 @@ void ShellInterpreter::update() {
     
     // Loop until we should exit
     while(this->isRunning) {
-    
         //Clean all input
         this->cleanUp();
         
@@ -187,16 +214,46 @@ void ShellInterpreter::executeProcess(void) {
             process_t c = {.pid = pid, .state = FOREGROUND};
             this->currentProcess = c;
             foreGroundProcessPID = c.pid;
-            this->processList.push_back(c);
+            ShellInterpreter::processList.push_back(c);
             waitpid(pid,&status,WUNTRACED);
         } else {
             process_t c = {.pid = pid, .state = BACKGROUND};
-            this->processList.push_back(c);
+            ShellInterpreter::processList.push_back(c);
             std::cout << "[PID] " << pid << std::endl;
         }
     }
  }
-    
+ 
+/**
+ * 
+ * @param pid
+ */
+void ShellInterpreter::dispatchJob(pid_t pid) {
+    std::vector<process_t>::iterator it = std::find_if(ShellInterpreter::processList.begin(), ShellInterpreter::processList.end(), [&pid](process_t& f) -> bool { return f.pid == pid; } );
+    if(it != ShellInterpreter::processList.end()) {
+        ShellInterpreter::processList.erase(it);
+        std::cout << "Erased " << pid << std::endl;
+    }
+
+}
+
+void ShellInterpreter::setForeGroundJob(pid_t pid) {
+    std::vector<process_t>::iterator it = std::find_if(ShellInterpreter::processList.begin(), ShellInterpreter::processList.end(), [&pid](process_t& f) 
+            -> bool { return f.pid == pid; } );
+        it->state = FOREGROUND;
+}
+
+void ShellInterpreter::setBackgroundJob(pid_t pid) {
+    std::vector<process_t>::iterator it = std::find_if(ShellInterpreter::processList.begin(), ShellInterpreter::processList.end(), [&pid](process_t& f) 
+            -> bool { return f.pid == pid; } );
+        it->state = BACKGROUND;
+}
+
+void ShellInterpreter::setStoppedJob(pid_t pid) {
+    std::vector<process_t>::iterator it = std::find_if(ShellInterpreter::processList.begin(), ShellInterpreter::processList.end(), [&pid](process_t& f) 
+            -> bool { return f.pid == pid; } );
+        it->state = STOPPED;
+}
 
 /**
  * 
@@ -216,10 +273,15 @@ bool ShellInterpreter::shell_logout(void) {
  * @return 
  */
 bool ShellInterpreter::shell_fg(void) {
-    int status;
-    kill(foreGroundProcessPID,SIGCONT);
-    waitpid(foreGroundProcessPID,&status,WUNTRACED);
-    return false;
+    if(foreGroundProcessPID != -1) {
+        int status;
+        
+        ShellInterpreter::setForeGroundJob(foreGroundProcessPID);
+        kill(foreGroundProcessPID,SIGCONT);
+        waitpid(foreGroundProcessPID,&status,WUNTRACED);
+        return false;
+    }
+    
 }
 
 /**
@@ -227,7 +289,15 @@ bool ShellInterpreter::shell_fg(void) {
  * @return 
  */
 bool ShellInterpreter::shell_bg(void) {
-    kill(foreGroundProcessPID,SIGCONT);
-    return false;
+    if(foreGroundProcessPID != -1) {
+
+       // Set process to background
+       ShellInterpreter::setBackgroundJob(foreGroundProcessPID);
+       kill(foreGroundProcessPID,SIGCONT);
+       
+       // Reset foreGroundId
+       foreGroundProcessPID = -1;
+       return false; 
+    }
     
 }

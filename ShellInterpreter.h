@@ -29,6 +29,15 @@ public:
     ShellInterpreter();
     ShellInterpreter(const ShellInterpreter& orig);
     
+    /*
+     * JOBCONTROL
+     */
+    
+    static void dispatchJob(pid_t pid);
+    static void setForeGroundJob(pid_t pid);
+    static void setBackgroundJob(pid_t pid);
+    static void setStoppedJob(pid_t pid);
+    
     void update();
     
     virtual ~ShellInterpreter();
@@ -36,7 +45,7 @@ private:
     
     std::string buffer;
     std::vector<char*> execBuffer;
-    std::vector<process_t> processList;
+    static std::vector<process_t> processList;
     bool isRunning;
     std::string shell_prompt;
     bool processWait;
@@ -51,7 +60,6 @@ private:
     bool shell_logout();
     bool shell_fg();
     bool shell_bg();
-    
 
 };
 
