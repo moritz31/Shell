@@ -16,7 +16,7 @@
 #include <signal.h>      // signal
 #include <sys/wait.h>    // std::transform
 
-int foreGroundProcessPID;
+int foreGroundProcessPID = -1;
 int exitProcess = 0;
 
 // Define shell cmds
@@ -55,18 +55,17 @@ void ShellInterpreter::sigchld_handler(int sig) {
     pid_t pid;  
     
     // Waiting for/ handling all of the child processes according to their status
-    while ((pid = waitpid(-1, &status, WNOHANG)) != -1) {  
+    while ((pid = waitpid(-1, &status, WNOHANG|WCONTINUED)) > 0) {  
           
-        if(pid == 0)
-            return;
-        
-        // If child is stopped set the job to stopped
-        if (WIFSTOPPED(status)) {
-            ShellInterpreter::setStoppedJob(pid);
+        // If child is continued set the job to foreground
+        if (WIFCONTINUED(status)) {
+            std::cout << "Job continued" << std::endl;
+            ShellInterpreter::setForeGroundJob(pid);
         }
         
         // If child exited dispatch the job from the list
-	if (WIFEXITED(status)) {
+        if (WIFEXITED(status)) {
+            std::cout << "Job dispatched" << std::endl;
             ShellInterpreter::dispatchJob(pid);
         }
     }  
@@ -191,14 +190,13 @@ void ShellInterpreter::executeProcess(void) {
     int status;
     // Try to fork a child process
     if((pid = fork()) < 0) {
-        setpgid(0,0);
         
         std::cout << "[ERROR] Forking process" << std::endl;
         //Error while forking
         exit(1);
     } else if(pid == 0) { // If we are the child process try to run the command
         // Try to execute the buffer
-        setpgid(0,0);
+        setpgid(0,getpid());
         if(execvp(this->execBuffer[0],this->execBuffer.data()) < 0) {
             
             std::cout << "[ERROR] Executing process" << std::endl;
@@ -207,12 +205,23 @@ void ShellInterpreter::executeProcess(void) {
         }
         
     } else {
-        
         // If we want to wait for an process to finish we need to call waitpid
         if(this->processWait) {
             this->addJob(pid);
             this->setForeGroundJob(pid);
-            waitpid(pid,&status,WUNTRACED);
+            foreGroundProcessPID = pid;
+            waitpid(pid,&status, WUNTRACED);
+            // If child is stopped set the job to stopped
+            if (WIFSTOPPED(status)) {
+                std::cout << "Job stopped" << std::endl;
+                ShellInterpreter::setStoppedJob(pid);
+            }
+        
+            // If child exited dispatch the job from the list
+            if (WIFEXITED(status)) {
+                std::cout << "Job dispatched" << std::endl;
+                ShellInterpreter::dispatchJob(pid);
+            }
         } else {
             this->addJob(pid);
             this->setBackgroundJob(pid);
@@ -281,10 +290,20 @@ bool ShellInterpreter::shell_logout(void) {
 bool ShellInterpreter::shell_fg(void) {
     if(foreGroundProcessPID != -1) {
         int status;
-        
         ShellInterpreter::setForeGroundJob(foreGroundProcessPID);
         kill(foreGroundProcessPID,SIGCONT);
         waitpid(foreGroundProcessPID,&status,WUNTRACED);
+            // If child is stopped set the job to stopped
+            if (WIFSTOPPED(status)) {
+                std::cout << "Job stopped" << std::endl;
+                ShellInterpreter::setStoppedJob(foreGroundProcessPID);
+            }
+        
+            // If child exited dispatch the job from the list
+            if (WIFEXITED(status)) {
+                std::cout << "Job dispatched" << std::endl;
+                ShellInterpreter::dispatchJob(foreGroundProcessPID);
+            }        
         return false;
     }
     
